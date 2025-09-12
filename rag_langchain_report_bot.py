@@ -114,7 +114,6 @@ def create_download_docx(report_content, topic="AI Research Report"):
     document = docx.Document()
     cleaned_topic = deep_clean_text(topic)
     
-    # Add a title
     document.add_heading(cleaned_topic, level=0)
     
     report_body = re.sub(r'#.*?\n+', '', report_content, count=1).strip()
@@ -131,7 +130,6 @@ def create_download_docx(report_content, topic="AI Research Report"):
         else:
             document.add_paragraph(cleaned_block)
             
-    # Save document to a memory buffer
     buffer = io.BytesIO()
     document.save(buffer)
     buffer.seek(0)
@@ -192,7 +190,6 @@ def main():
     2.  **Generative Mode:** Leave the file uploader empty and provide a topic to generate a report from scratch.
     """)
 
-    # --- SESSION STATE INITIALIZATION ---
     if 'report_generated' not in st.session_state:
         st.session_state.report_generated = False
         st.session_state.final_report = ""
@@ -215,7 +212,6 @@ def main():
         final_report = ""
         current_topic = ""
 
-        # --- RAG WORKFLOW ---
         if uploaded_files:
             with st.spinner("Processing documents with OCR and generating RAG report..."):
                 text_chunks = process_pdf(uploaded_files)
@@ -226,18 +222,13 @@ def main():
                         outline_prompt = f"""Based on the provided context, generate a detailed table of contents for a research report of about {page_count} pages. {instruction_addition} CONTEXT: {{context}} QUERY: {{input}}"""
                         outline_chain = create_rag_chain(vector_store, groq_api_key, outline_prompt)
                         toc = outline_chain.invoke({"input": "Generate a table of contents."})['answer']
-
                         with st.expander("Generated Table of Contents", expanded=True): st.markdown(toc)
-
                         section_titles = re.findall(r'^\s*[\d\w]+\..*$', toc, re.MULTILINE)
                         if not section_titles: section_titles = [line.strip() for line in toc.split('\n') if line.strip() and len(line.strip()) > 5]
-                        
                         full_report_list = []
                         words_per_section = (page_count * 400) // len(section_titles) if section_titles else 500
-                        
                         section_prompt = f"""As a research analyst, write a comprehensive section on: "{{input}}". Write about {words_per_section} words. Use the CONTEXT to elaborate. {instruction_addition} DO NOT write a title. CONTEXT: {{context}} QUERY: {{input}}"""
                         section_chain = create_rag_chain(vector_store, groq_api_key, section_prompt)
-                        
                         progress_bar = st.progress(0, text="Generating report sections...")
                         for i, title in enumerate(section_titles):
                             clean_title = re.sub(r'^\s*[\d\w]+\.\s*', '', title).strip()
@@ -245,30 +236,22 @@ def main():
                             response = section_chain.invoke({"input": clean_title})
                             full_report_list.append(f"## {title}\n\n{response['answer']}")
                             progress_bar.progress((i + 1) / len(section_titles), text=f"Generated: {clean_title}")
-
                         final_report = "# Your In-Depth Research Report\n\n" + "\n\n".join(full_report_list)
                         current_topic = "RAG-Generated Research Report"
-        
-        # --- GENERATIVE WORKFLOW ---
         else:
             with st.spinner(f"Generating a new report on '{report_topic}'..."):
                 llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
                 instruction_addition = f"USER INSTRUCTIONS: \"{user_instructions}\"" if user_instructions else ""
-
                 outline_prompt = PromptTemplate.from_template(f"Generate a detailed table of contents for a report of about {page_count} pages on the topic: '{{topic}}'. {instruction_addition}")
                 outline_chain = outline_prompt | llm
                 toc = outline_chain.invoke({"topic": report_topic}).content
                 with st.expander("Generated Table of Contents", expanded=True): st.markdown(toc)
-
                 section_titles = re.findall(r'^\s*[\d\w]+\..*$', toc, re.MULTILINE)
                 if not section_titles: section_titles = [line.strip() for line in toc.split('\n') if line.strip() and len(line.strip()) > 5]
-
                 full_report_list = []
                 words_per_section = (page_count * 400) // len(section_titles) if section_titles else 500
-
                 section_prompt = PromptTemplate.from_template(f"As a research analyst, write a comprehensive section on: '{{section}}'. The main report topic is '{report_topic}'. Write about {words_per_section} words. {instruction_addition} DO NOT write a title.")
                 section_chain = section_prompt | llm
-
                 progress_bar = st.progress(0, text="Generating report sections...")
                 for i, title in enumerate(section_titles):
                     clean_title = re.sub(r'^\s*[\d\w]+\.\s*', '', title).strip()
@@ -276,29 +259,26 @@ def main():
                     response = section_chain.invoke({"section": clean_title})
                     full_report_list.append(f"## {title}\n\n{response.content}")
                     progress_bar.progress((i + 1) / len(section_titles), text=f"Generated: {clean_title}")
-
                 final_report = f"# Your In-Depth Research Report: {report_topic}\n\n" + "\n\n".join(full_report_list)
                 current_topic = report_topic
         
-        # --- Update Session State ---
         if final_report:
             st.session_state.final_report = final_report
             st.session_state.report_topic = current_topic
             st.session_state.report_generated = True
-            st.rerun() # Rerun to display the report from state
+            st.rerun()
 
-    # --- DISPLAY REPORT AND DOWNLOAD BUTTONS ---
     if st.session_state.report_generated:
         st.subheader("🎉 Your Detailed Research Report is Ready!")
         st.markdown(st.session_state.final_report)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             pdf_bytes = create_download_pdf(st.session_state.final_report, st.session_state.report_topic)
             if pdf_bytes:
                 st.download_button(
-                    label="Download Report as PDF", 
+                    label="⬇️ Download as PDF", 
                     data=pdf_bytes, 
                     file_name="report.pdf", 
                     mime="application/pdf",
@@ -309,12 +289,21 @@ def main():
             docx_bytes = create_download_docx(st.session_state.final_report, st.session_state.report_topic)
             if docx_bytes:
                 st.download_button(
-                    label="Download Report as DOCX",
+                    label="⬇️ Download as DOCX",
                     data=docx_bytes,
                     file_name="report.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
+        
+        with col3:
+            st.download_button(
+                label="⬇️ Download as Markdown",
+                data=st.session_state.final_report.encode('utf-8'),
+                file_name="report.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
 
 if __name__ == "__main__":
     main()
