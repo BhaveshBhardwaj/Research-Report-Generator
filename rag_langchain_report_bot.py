@@ -16,6 +16,7 @@ import pytesseract
 import io
 from fpdf import FPDF
 import unicodedata
+import docx
 
 def deep_clean_text(text):
     """
@@ -32,50 +33,109 @@ def deep_clean_text(text):
             cleaned_chars.append(char)
     return "".join(cleaned_chars)
 
+class PDF(FPDF):
+    def __init__(self, font_family='DejaVu', topic=""):
+        super().__init__()
+        self.font_family = font_family
+        self.topic = topic
+
+    def header(self):
+        if self.page_no() == 1:
+            return
+        self.set_font(self.font_family, '', 9)
+        self.cell(0, 10, self.topic, 0, 0, 'L')
+        self.ln(10)
+
+    def footer(self):
+        if self.page_no() == 1:
+            return
+        self.set_y(-15)
+        self.set_font(self.font_family, 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no() - 1}', 0, 0, 'C')
+
 def create_download_pdf(report_content, topic="AI Research Report"):
     """
-    Generates a Unicode-aware PDF file and returns a 'bytes' object, which is the
-    correct data type for Streamlit's download button.
+    Generates a well-formatted, Unicode-aware PDF with a title page, headers,
+    footers, and proper page breaks.
     """
-    pdf = FPDF()
-    pdf.add_page()
+    cleaned_topic = deep_clean_text(topic)
+    pdf = PDF(topic=cleaned_topic)
     
     try:
-        # Assumes a subfolder named 'dejavu-sans' exists with the font files
         pdf.add_font('DejaVu', '', 'dejavu-sans/DejaVuSans.ttf', uni=True)
         pdf.add_font('DejaVu', 'B', 'dejavu-sans/DejaVuSans-Bold.ttf', uni=True)
-        font_family = 'DejaVu'
+        pdf.add_font('DejaVu', 'I', 'dejavu-sans/DejaVuSans-Oblique.ttf', uni=True)
     except RuntimeError:
-        st.error("CRITICAL: DejaVu font files not found in the 'dejavu-sans' subfolder. Please ensure the folder and .ttf files are present.")
+        st.error("CRITICAL: DejaVu font files not found. Please ensure 'dejavu-sans' folder exists with the required .ttf files.")
         return None
 
-    cleaned_topic = deep_clean_text(topic)
-    pdf.set_font(font_family, 'B', 18)
-    pdf.multi_cell(0, 10, cleaned_topic, 0, 'C')
+    pdf.add_page()
+    pdf.set_font('DejaVu', 'B', 24)
+    pdf.ln(60)
+    pdf.multi_cell(0, 15, cleaned_topic, 0, 'C')
     pdf.ln(10)
+    pdf.set_font('DejaVu', '', 14)
+    pdf.multi_cell(0, 10, "An AI-Generated Research Analysis", 0, 'C')
+    pdf.set_y(-30)
+    pdf.set_font('DejaVu', '', 10)
+    pdf.multi_cell(0, 10, f"Generated on: {time.strftime('%Y-%m-%d')}", 0, 'C')
 
-    pdf.set_font(font_family, '', 12)
-    lines = report_content.split('\n')
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=25)
     
-    for line in lines:
-        cleaned_line = deep_clean_text(line)
-        if not cleaned_line.strip():
-            pdf.ln(3)
-            continue
-        if cleaned_line.startswith('# '):
-            continue
-        elif cleaned_line.startswith('## '):
-            pdf.set_font(font_family, 'B', 14)
-            pdf.multi_cell(0, 8, cleaned_line.replace('## ', ''))
-            pdf.ln(2)
-            pdf.set_font(font_family, '', 12)
-        else:
-            pdf.multi_cell(0, 6, cleaned_line)
-            pdf.ln(1)
+    report_body = re.sub(r'#.*?\n+', '', report_content, count=1).strip()
+    blocks = re.split(r'\n\s*\n', report_body)
 
-    # --- THE DEFINITIVE FIX FOR THE bytearray ERROR ---
-    # Explicitly cast the output to 'bytes' to guarantee the correct data type for Streamlit.
+    for block in blocks:
+        block = block.strip()
+        if not block: continue
+        cleaned_block = deep_clean_text(block)
+        is_heading = cleaned_block.startswith('## ')
+        
+        if is_heading and pdf.get_y() > (297 - 50):
+             pdf.add_page()
+
+        if is_heading:
+            pdf.ln(8)
+            pdf.set_font('DejaVu', 'B', 16)
+            pdf.multi_cell(0, 8, cleaned_block.replace('## ', ''), 0, 'L')
+            pdf.ln(4)
+        else:
+            pdf.set_font('DejaVu', '', 12)
+            pdf.multi_cell(0, 7, cleaned_block, 0, 'L')
+            pdf.ln(3)
+
     return bytes(pdf.output())
+
+def create_download_docx(report_content, topic="AI Research Report"):
+    """
+    Generates a .docx file from the report string and returns its bytes.
+    """
+    document = docx.Document()
+    cleaned_topic = deep_clean_text(topic)
+    
+    # Add a title
+    document.add_heading(cleaned_topic, level=0)
+    
+    report_body = re.sub(r'#.*?\n+', '', report_content, count=1).strip()
+    blocks = re.split(r'\n\s*\n', report_body)
+
+    for block in blocks:
+        block = block.strip()
+        if not block: continue
+        
+        cleaned_block = deep_clean_text(block)
+        
+        if cleaned_block.startswith('## '):
+            document.add_heading(cleaned_block.replace('## ', ''), level=2)
+        else:
+            document.add_paragraph(cleaned_block)
+            
+    # Save document to a memory buffer
+    buffer = io.BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 def process_pdf(pdf_files):
     if not pdf_files: return []
@@ -132,6 +192,12 @@ def main():
     2.  **Generative Mode:** Leave the file uploader empty and provide a topic to generate a report from scratch.
     """)
 
+    # --- SESSION STATE INITIALIZATION ---
+    if 'report_generated' not in st.session_state:
+        st.session_state.report_generated = False
+        st.session_state.final_report = ""
+        st.session_state.report_topic = ""
+
     with st.sidebar:
         st.header("⚙️ Configuration")
         groq_api_key = st.text_input("Enter your Groq API Key:", type="password")
@@ -145,76 +211,59 @@ def main():
     if st.button("Generate Detailed Report"):
         if not groq_api_key: st.error("A Groq API Key is required."); return
         if not uploaded_files and not report_topic: st.error("Please upload PDFs or enter a topic."); return
+        
+        final_report = ""
+        current_topic = ""
 
         # --- RAG WORKFLOW ---
         if uploaded_files:
             with st.spinner("Processing documents with OCR and generating RAG report..."):
-                start_time = time.time()
-                
                 text_chunks = process_pdf(uploaded_files)
-                if not text_chunks:
-                    st.error("Could not extract any text from the PDFs.")
-                    return
+                if text_chunks:
+                    vector_store = get_vector_store(text_chunks)
+                    if vector_store:
+                        instruction_addition = f"USER INSTRUCTIONS: \"{user_instructions}\"" if user_instructions else ""
+                        outline_prompt = f"""Based on the provided context, generate a detailed table of contents for a research report of about {page_count} pages. {instruction_addition} CONTEXT: {{context}} QUERY: {{input}}"""
+                        outline_chain = create_rag_chain(vector_store, groq_api_key, outline_prompt)
+                        toc = outline_chain.invoke({"input": "Generate a table of contents."})['answer']
 
-                st.write("Step 2/5: Creating vector store...")
-                vector_store = get_vector_store(text_chunks)
-                if vector_store is None: return
-                
-                instruction_addition = f"USER INSTRUCTIONS: \"{user_instructions}\"" if user_instructions else ""
+                        with st.expander("Generated Table of Contents", expanded=True): st.markdown(toc)
 
-                st.write("Step 3/5: Generating a detailed Table of Contents...")
-                outline_prompt = f"""Based on the provided context, generate a detailed table of contents for a research report of about {page_count} pages. {instruction_addition} CONTEXT: {{context}} QUERY: {{input}}"""
-                outline_chain = create_rag_chain(vector_store, groq_api_key, outline_prompt)
-                toc = outline_chain.invoke({"input": "Generate a table of contents."})['answer']
+                        section_titles = re.findall(r'^\s*[\d\w]+\..*$', toc, re.MULTILINE)
+                        if not section_titles: section_titles = [line.strip() for line in toc.split('\n') if line.strip() and len(line.strip()) > 5]
+                        
+                        full_report_list = []
+                        words_per_section = (page_count * 400) // len(section_titles) if section_titles else 500
+                        
+                        section_prompt = f"""As a research analyst, write a comprehensive section on: "{{input}}". Write about {words_per_section} words. Use the CONTEXT to elaborate. {instruction_addition} DO NOT write a title. CONTEXT: {{context}} QUERY: {{input}}"""
+                        section_chain = create_rag_chain(vector_store, groq_api_key, section_prompt)
+                        
+                        progress_bar = st.progress(0, text="Generating report sections...")
+                        for i, title in enumerate(section_titles):
+                            clean_title = re.sub(r'^\s*[\d\w]+\.\s*', '', title).strip()
+                            st.write(f"-> Generating: {clean_title}")
+                            response = section_chain.invoke({"input": clean_title})
+                            full_report_list.append(f"## {title}\n\n{response['answer']}")
+                            progress_bar.progress((i + 1) / len(section_titles), text=f"Generated: {clean_title}")
 
-                with st.expander("Generated Table of Contents", expanded=True): st.markdown(toc)
-
-                st.write("Step 4/5: Generating content for each section...")
-                section_titles = re.findall(r'^\s*[\d\w]+\..*$', toc, re.MULTILINE)
-                if not section_titles: section_titles = [line.strip() for line in toc.split('\n') if line.strip() and len(line.strip()) > 5]
-                
-                full_report = []
-                words_per_section = (page_count * 400) // len(section_titles) if section_titles else 500
-                
-                section_prompt = f"""As a research analyst, write a comprehensive section on: "{{input}}". Write about {words_per_section} words. Use the CONTEXT to elaborate. {instruction_addition} DO NOT write a title. CONTEXT: {{context}} QUERY: {{input}}"""
-                section_chain = create_rag_chain(vector_store, groq_api_key, section_prompt)
-                
-                progress_bar = st.progress(0, text="Generating report sections...")
-                for i, title in enumerate(section_titles):
-                    clean_title = re.sub(r'^\s*[\d\w]+\.\s*', '', title).strip()
-                    st.write(f"-> Generating: {clean_title}")
-                    response = section_chain.invoke({"input": clean_title})
-                    full_report.append(f"## {title}\n\n{response['answer']}")
-                    progress_bar.progress((i + 1) / len(section_titles), text=f"Generated: {clean_title}")
-
-                st.write("Step 5/5: Compiling and generating PDF...")
-                final_report = "# Your In-Depth Research Report\n\n" + "\n\n".join(full_report)
-                
-                st.subheader("🎉 Your Detailed Research Report is Ready!")
-                st.markdown(final_report)
-                pdf_bytes = create_download_pdf(final_report, "RAG-Generated Research Report")
-                if pdf_bytes:
-                    st.download_button(label="Download Report as PDF", data=pdf_bytes, file_name="rag_report.pdf", mime="application/pdf")
+                        final_report = "# Your In-Depth Research Report\n\n" + "\n\n".join(full_report_list)
+                        current_topic = "RAG-Generated Research Report"
         
         # --- GENERATIVE WORKFLOW ---
         else:
             with st.spinner(f"Generating a new report on '{report_topic}'..."):
-                start_time = time.time()
                 llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
                 instruction_addition = f"USER INSTRUCTIONS: \"{user_instructions}\"" if user_instructions else ""
 
-                st.write("Step 1/3: Generating a detailed Table of Contents...")
                 outline_prompt = PromptTemplate.from_template(f"Generate a detailed table of contents for a report of about {page_count} pages on the topic: '{{topic}}'. {instruction_addition}")
                 outline_chain = outline_prompt | llm
                 toc = outline_chain.invoke({"topic": report_topic}).content
-
                 with st.expander("Generated Table of Contents", expanded=True): st.markdown(toc)
 
-                st.write("Step 2/3: Generating content for each section...")
                 section_titles = re.findall(r'^\s*[\d\w]+\..*$', toc, re.MULTILINE)
                 if not section_titles: section_titles = [line.strip() for line in toc.split('\n') if line.strip() and len(line.strip()) > 5]
 
-                full_report = []
+                full_report_list = []
                 words_per_section = (page_count * 400) // len(section_titles) if section_titles else 500
 
                 section_prompt = PromptTemplate.from_template(f"As a research analyst, write a comprehensive section on: '{{section}}'. The main report topic is '{report_topic}'. Write about {words_per_section} words. {instruction_addition} DO NOT write a title.")
@@ -225,17 +274,47 @@ def main():
                     clean_title = re.sub(r'^\s*[\d\w]+\.\s*', '', title).strip()
                     st.write(f"-> Generating: {clean_title}")
                     response = section_chain.invoke({"section": clean_title})
-                    full_report.append(f"## {title}\n\n{response.content}")
+                    full_report_list.append(f"## {title}\n\n{response.content}")
                     progress_bar.progress((i + 1) / len(section_titles), text=f"Generated: {clean_title}")
 
-                st.write("Step 3/3: Compiling and generating PDF...")
-                final_report = f"# Your In-Depth Research Report: {report_topic}\n\n" + "\n\n".join(full_report)
-                
-                st.subheader("🎉 Your Detailed Research Report is Ready!")
-                st.markdown(final_report)
-                pdf_bytes = create_download_pdf(final_report, report_topic)
-                if pdf_bytes:
-                    st.download_button(label="Download Report as PDF", data=pdf_bytes, file_name="generated_report.pdf", mime="application/pdf")
+                final_report = f"# Your In-Depth Research Report: {report_topic}\n\n" + "\n\n".join(full_report_list)
+                current_topic = report_topic
+        
+        # --- Update Session State ---
+        if final_report:
+            st.session_state.final_report = final_report
+            st.session_state.report_topic = current_topic
+            st.session_state.report_generated = True
+            st.rerun() # Rerun to display the report from state
+
+    # --- DISPLAY REPORT AND DOWNLOAD BUTTONS ---
+    if st.session_state.report_generated:
+        st.subheader("🎉 Your Detailed Research Report is Ready!")
+        st.markdown(st.session_state.final_report)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            pdf_bytes = create_download_pdf(st.session_state.final_report, st.session_state.report_topic)
+            if pdf_bytes:
+                st.download_button(
+                    label="Download Report as PDF", 
+                    data=pdf_bytes, 
+                    file_name="report.pdf", 
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+        
+        with col2:
+            docx_bytes = create_download_docx(st.session_state.final_report, st.session_state.report_topic)
+            if docx_bytes:
+                st.download_button(
+                    label="Download Report as DOCX",
+                    data=docx_bytes,
+                    file_name="report.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
 
 if __name__ == "__main__":
     main()
