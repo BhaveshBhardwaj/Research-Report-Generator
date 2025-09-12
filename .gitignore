@@ -1,0 +1,26 @@
+# --- Python Virtual Environments ---
+# This is often a very large folder and should never be in Git.
+venv/
+.venv/
+env/
+.env/
+
+# --- Sensitive Information ---
+# This file contains your API keys and other secrets.
+# It is CRITICAL to ignore this file for security.
+.env
+
+# --- Python Cache and Compiled Files ---
+# These are temporary files Python generates automatically.
+__pycache__/
+*.pyc
+
+# --- IDE and Editor Folders ---
+# Optional but good practice to ignore configuration folders from editors.
+.vscode/
+.idea/
+
+# --- Operating System Files ---
+# Ignores files like .DS_Store on macOS or Thumbs.db on Windows.
+.DS_Store
+Thumbs.db
