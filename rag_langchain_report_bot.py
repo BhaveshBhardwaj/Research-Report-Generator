@@ -175,7 +175,7 @@ def get_vector_store(text_chunks):
         return None
 
 def create_rag_chain(vector_store, groq_api_key, prompt_template):
-    llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
+    llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-maverick-17b-128e-instruct")
     prompt = PromptTemplate(template=prompt_template, input_variables=["context", "input"])
     retriever = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 5})
     combine_docs_chain = create_stuff_documents_chain(llm, prompt)
@@ -240,7 +240,7 @@ def main():
                         current_topic = "RAG-Generated Research Report"
         else:
             with st.spinner(f"Generating a new report on '{report_topic}'..."):
-                llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
+                llm = ChatGroq(groq_api_key=groq_api_key, model_name="meta-llama/llama-4-maverick-17b-128e-instruct")
                 instruction_addition = f"USER INSTRUCTIONS: \"{user_instructions}\"" if user_instructions else ""
                 outline_prompt = PromptTemplate.from_template(f"Generate a detailed table of contents for a report of about {page_count} pages on the topic: '{{topic}}'. {instruction_addition}")
                 outline_chain = outline_prompt | llm
